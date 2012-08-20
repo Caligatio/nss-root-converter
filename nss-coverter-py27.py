@@ -68,7 +68,7 @@ class VerifiedHTTPSConnection(HTTPSConnection):
 				self.key_file,
 				self.cert_file,
 				cert_reqs = ssl.CERT_REQUIRED, # NEW: Require certificate validation
-				ca_certs = self.ca_file # NEW: Path to trusted CA file, grabbed from http://curl.haxx.se/ca/cacert.pem
+				ca_certs = self.ca_file # NEW: Path to trusted CA file
 			)
 		else:
 			self.sock = ssl.wrap_socket(sock, self.key_file, self.cert_file)
