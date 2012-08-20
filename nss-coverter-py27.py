@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 '''
 Copyright (c) 2012, Brian Turek
 All rights reserved.
@@ -27,14 +27,68 @@ SOFTWARE, EVEN IF ADVISEDOF THE POSSIBILITY OF SUCH DAMAGE.
 '''
 
 from gzip import GzipFile
-from io import BytesIO
+from StringIO import StringIO
 from base64 import b64encode
 from textwrap import wrap
-from urllib.request import urlopen, Request
+from httplib import HTTPSConnection
 from argparse import ArgumentParser
+import urllib2
 import sys
 import ssl
 import re
+import socket
+
+class VerifiedHTTPSConnection(HTTPSConnection):
+	'''
+	Modified version of the httplib.HTTPSConnection class that forces server
+	certificate validation
+	'''
+	def __init__(self, host, port=None, key_file=None, cert_file=None,
+		strict=None, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None,
+		ca_file=None):
+			HTTPSConnection.__init__(self, host, port, key_file,
+				cert_file, strict, timeout, source_address)
+
+			self.ca_file = ca_file
+
+	def connect(self):
+		sock = socket.create_connection(
+			(self.host, self.port),
+			self.timeout, self.source_address
+		)
+
+		if self._tunnel_host:
+			self.sock = sock
+			self._tunnel()
+
+		if (None != self.ca_file):
+			# Wrap the socket using verification with the root certs, note the hardcoded path
+			self.sock = ssl.wrap_socket(
+				sock,
+				self.key_file,
+				self.cert_file,
+				cert_reqs = ssl.CERT_REQUIRED, # NEW: Require certificate validation
+				ca_certs = self.ca_file # NEW: Path to trusted CA file, grabbed from http://curl.haxx.se/ca/cacert.pem
+			)
+		else:
+			self.sock = ssl.wrap_socket(sock, self.key_file, self.cert_file)
+
+class VerifiedHTTPSHandler(urllib2.HTTPSHandler):
+	'''
+	Modified version of the urllib2.HTTPSHandler class that uses the
+	VerifiedHTTPSConnection HTTPSConnection class
+	'''
+	def __init__(self, debuglevel=0, key_file=None, cert_file=None, ca_file=None):
+		urllib2.HTTPSHandler.__init__(self, debuglevel)
+		self.key_file = key_file
+		self.cert_file = cert_file
+		self.ca_file = ca_file
+
+	def https_open(self, req):
+		return self.do_open(self.get_connection, req)
+
+	def get_connection(self, host, timeout = socket._GLOBAL_DEFAULT_TIMEOUT):
+		return VerifiedHTTPSConnection(host, timeout = timeout, ca_file = self.ca_file)
 
 def fetchUrl(url, caFile = None):
 	'''
@@ -45,13 +99,16 @@ def fetchUrl(url, caFile = None):
 	# Setup headers to be used with accessing Southwest's website
 	headers = {'Accept-Encoding': 'gzip'}
 
-	request = Request(url, None, headers)
-	sock = urlopen(request, cafile = caFile)
+	# Chain openers
+	opener = urllib2.build_opener(VerifiedHTTPSHandler(ca_file = caFile))
+	urllib2.install_opener(opener)
+	request = urllib2.Request(url, None, headers)
+	sock = urllib2.urlopen(request)
 	data = sock.read()
 
 	# Check for GZip encoding and decode if needed
 	if (sock.headers.get('content-encoding', None) == 'gzip'):
-		data = GzipFile(fileobj=BytesIO(data)).read()
+		data = GzipFile(fileobj=StringIO(data)).read()
 
 	return data
 
@@ -73,13 +130,11 @@ def parseNSSFile(caFile = None, explicitTrustOnly = True, trustServerAuth = True
 		sys.stdout.write("Warning: accessing the NSS certificate root file without SSL validation")
 
 	try:
-		raw = fetchUrl('https://mxr.mozilla.org/mozilla/source/security/nss/lib/ckfw/builtins/certdata.txt?raw=1',
+		content = fetchUrl('https://mxr.mozilla.org/mozilla/source/security/nss/lib/ckfw/builtins/certdata.txt?raw=1',
 			caFile)
 	except (ssl.SSLError) as e:
 		sys.stderr.write("Error: cannot find needed SSL certificate in CAFile, aborting\n")
 		return None
-
-	content = raw.decode('utf-8')
 
 	lines = content.splitlines()
 
@@ -130,7 +185,7 @@ def parseMultlineOctal(lines, num):
 	while True:
 		if ('END' == lines[num]):
 			# Convert octal digits into ints using map/lambda
-			return bytes(map(lambda x: int(x, 8), value))
+			return map(lambda x: int(x, 8), value)
 		elif (lines[num].startswith('\\')):
 			# Skip the first item as its empty
 			value.extend(lines[num].split('\\')[1:])
@@ -216,7 +271,7 @@ def main(outFile, caFile = None, explicitTrustOnly = True, trustServerAuth = Tru
 		return
 
 	try:
-		f = open(outFile, 'wt', encoding='utf-8')
+		f = open(outFile, 'wt')
 	except (IOError) as e:
 		sys.stderr.write("Error: could not open output file\n")
 		return
@@ -236,11 +291,11 @@ def main(outFile, caFile = None, explicitTrustOnly = True, trustServerAuth = Tru
 		name = trustedCert['CKA_LABEL']['value'].strip("\"")
 
 		f.write(name + "\n")
-		f.write("=" * len(name) + "\n")
+		f.write("=" * len(name.decode("utf-8")) + "\n")
 		f.write("-----BEGIN CERTIFICATE-----\n")
 		f.write("\n".join(
 			wrapB64(
-				b64encode(trustedCert['CKA_VALUE']['value']).decode('utf-8'),
+				b64encode(''.join(map(chr, trustedCert['CKA_VALUE']['value']))),
 				76)
 			) + "\n")
 		f.write("-----END CERTIFICATE-----\n\n")
@@ -250,7 +305,7 @@ def main(outFile, caFile = None, explicitTrustOnly = True, trustServerAuth = Tru
 def wrapB64(str, width = 70):
 	'''
 	wrapB64(str[, width = 70]) -> list(str)
-
+	
 	Wraps a string that was base-64 encoded to a set width.  textwrap.wrap
 	is extremely slow at contiguous strings
 	'''
@@ -261,7 +316,7 @@ def wrapB64(str, width = 70):
 	while True:
 		line = str[offset : offset + width]
 		retVal.append(line)
-
+		
 		if ((offset + width) >= strLen):
 			break
 
