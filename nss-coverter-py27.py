@@ -70,8 +70,36 @@ class VerifiedHTTPSConnection(HTTPSConnection):
 				cert_reqs = ssl.CERT_REQUIRED, # NEW: Require certificate validation
 				ca_certs = self.ca_file # NEW: Path to trusted CA file
 			)
+
+			self.checkHostname()
 		else:
 			self.sock = ssl.wrap_socket(sock, self.key_file, self.cert_file)
+
+	def checkHostname(self):
+		'''
+		checkHostname()
+
+		Checks the hostname being accessed against the various hostnames present
+		in the remote certificate
+		'''
+		hostnames = set()
+		cert = self.sock.getpeercert()
+
+		for subject in cert['subject']:
+			if ('commonName' == subject[0][0]):
+				hostnames.add(subject[0][1].encode('utf-8'))
+
+		# Get the subject alternative names out of the certificate
+		try:
+			sans = (x for x in cert['subjectAltName'] if x[0] == 'DNS')
+			for san in sans:
+				hostnames.add(san[1])
+		except (KeyError) as e:
+			pass
+
+		if (self.host not in hostnames):
+			raise ssl.SSLError("hostname '%s' doesn't match certificate name(s) '%s'" %
+				(self.host, ', '.join(hostnames)))
 
 class VerifiedHTTPSHandler(urllib2.HTTPSHandler):
 	'''
@@ -305,7 +333,7 @@ def main(outFile, caFile = None, explicitTrustOnly = True, trustServerAuth = Tru
 def wrapB64(str, width = 70):
 	'''
 	wrapB64(str[, width = 70]) -> list(str)
-	
+
 	Wraps a string that was base-64 encoded to a set width.  textwrap.wrap
 	is extremely slow at contiguous strings
 	'''
@@ -316,7 +344,7 @@ def wrapB64(str, width = 70):
 	while True:
 		line = str[offset : offset + width]
 		retVal.append(line)
-		
+
 		if ((offset + width) >= strLen):
 			break
 
