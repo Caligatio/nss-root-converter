@@ -155,7 +155,7 @@ def parseNSSFile(caFile = None, explicitTrustOnly = True, trustServerAuth = True
 	date = None
 
 	if (None == caFile):
-		sys.stdout.write("Warning: accessing the NSS certificate root file without SSL validation")
+		sys.stdout.write("Warning: accessing the NSS certificate root file without SSL validation\n")
 
 	try:
 		content = fetchUrl('https://mxr.mozilla.org/mozilla/source/security/nss/lib/ckfw/builtins/certdata.txt?raw=1',

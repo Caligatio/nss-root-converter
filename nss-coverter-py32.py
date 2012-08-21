@@ -36,7 +36,7 @@ import sys
 import ssl
 import re
 
-def fetchUrl(url, caFile = None):
+def fetchUrl(url, caFile = None, caPath = None):
 	'''
 	fetchUrl(url[, caFile = None]) -> bytes
 
@@ -46,7 +46,7 @@ def fetchUrl(url, caFile = None):
 	headers = {'Accept-Encoding': 'gzip'}
 
 	request = Request(url, None, headers)
-	sock = urlopen(request, cafile = caFile)
+	sock = urlopen(request, cafile = caFile, capath = caPath)
 	data = sock.read()
 
 	# Check for GZip encoding and decode if needed
@@ -55,11 +55,13 @@ def fetchUrl(url, caFile = None):
 
 	return data
 
-def parseNSSFile(caFile = None, explicitTrustOnly = True, trustServerAuth = True,
-	trustEmailProtection = False, trustCodeSigning = False):
+def parseNSSFile(caFile = None, caPath = None, explicitTrustOnly = True,
+	trustServerAuth = True, trustEmailProtection = False,
+	trustCodeSigning = False):
 	'''
-	parseNSSFile(caFile = None, explicitTrustOnly = True, trustServerAuth = True,
-		trustEmailProtection = False, trustCodeSigning = False) -> tuple
+	parseNSSFile([caFile = None, caPath = None, explicitTrustOnly = True,
+		trustServerAuth = True, trustEmailProtection = False,
+		trustCodeSigning = False]) -> tuple
 
 	Downloads and parses out the license, date, and trusted certificate roots
 	contained in the NSS certificate root file.
@@ -69,12 +71,12 @@ def parseNSSFile(caFile = None, explicitTrustOnly = True, trustServerAuth = True
 	license = None
 	date = None
 
-	if (None == caFile):
-		sys.stdout.write("Warning: accessing the NSS certificate root file without SSL validation")
+	if ((None == caFile) and (None == caPath)):
+		sys.stdout.write("Warning: accessing the NSS certificate root file without SSL validation\n")
 
 	try:
 		raw = fetchUrl('https://mxr.mozilla.org/mozilla/source/security/nss/lib/ckfw/builtins/certdata.txt?raw=1',
-			caFile)
+			caFile, caPath)
 	except (ssl.SSLError) as e:
 		sys.stderr.write("Error: cannot find needed SSL certificate in CAFile, aborting\n")
 		return None
@@ -196,16 +198,19 @@ def isCertTrusted(cert, trusts, explicitTrustOnly, trustServerAuth,
 	else:
 		return False
 
-def main(outFile, caFile = None, explicitTrustOnly = True, trustServerAuth = True,
-	trustEmailProtection = False, trustCodeSigning = False):
+def main(outFile, caFile = None, caPath = None, explicitTrustOnly = True,
+	trustServerAuth = True, trustEmailProtection = False,
+	trustCodeSigning = False):
 	'''
-	main(outFile, caFile = None, explicitTrustOnly = True, trustServerAuth = True,
-		trustEmailProtection = False, trustCodeSigning = False)
+	main(outFile, caFile = None, caPath = None, explicitTrustOnly = True,
+		trustServerAuth = True, trustEmailProtection = False,
+		trustCodeSigning = False)
 
 	Downloads and parses the NSS certificate root file, writing out the license,
 	data, and trusted certificates to a PEM file
 	'''
 	parsedNSS = parseNSSFile(caFile,
+					caPath,
 					explicitTrustOnly,
 					trustServerAuth,
 					trustEmailProtection,
@@ -274,7 +279,11 @@ if (__name__ == "__main__"):
 		description = 'Downloads the Mozilla NSS root certificates and coverts to PEM format')
 	parser.add_argument('outFile', help = 'Output filename for PEM certificates')
 	parser.add_argument('--caFile', dest = 'caFile', metavar = 'FILE',
+		default = None,
 		help = 'CAChain file to be used to obtain the NSS root certificates')
+	parser.add_argument('--caPath', dest = 'caPath', metavar = 'DIR',
+		default = None,
+		help = 'Path to directory of PEM formatted certificates to be used to obtain the NSS root certificates')
 	parser.add_argument('--trustExplictOnly', action = 'store_true',
 		default = True)
 	parser.add_argument('--trustServerAuth', action = 'store_true',
@@ -286,5 +295,5 @@ if (__name__ == "__main__"):
 
 	args = parser.parse_args()
 
-	main(args.outFile, args.caFile, args.trustExplictOnly, args.trustServerAuth,
+	main(args.outFile, args.caFile, args.caPath, args.trustExplictOnly, args.trustServerAuth,
 		args.trustEmailProtection, args.trustCodeSigning)
